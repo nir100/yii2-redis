@@ -514,13 +514,14 @@ class Connection extends Component
      * It does nothing if a DB connection has already been established.
      * @throws Exception if connection fails
      */
-    public function open()
+    public function open($try=5)
     {
         if ($this->_socket !== false) {
             return;
         }
         $connection = ($this->unixSocket ?: $this->hostname . ':' . $this->port) . ', database=' . $this->database;
         \Yii::trace('Opening redis DB connection: ' . $connection, __METHOD__);
+
         $this->_socket = @stream_socket_client(
             $this->unixSocket ? 'unix://' . $this->unixSocket : 'tcp://' . $this->hostname . ':' . $this->port,
             $errorNumber,
@@ -528,6 +529,7 @@ class Connection extends Component
             $this->connectionTimeout ? $this->connectionTimeout : ini_get('default_socket_timeout'),
             $this->socketClientFlags
         );
+
         if ($this->_socket) {
             if ($this->dataTimeout !== null) {
                 stream_set_timeout($this->_socket, $timeout = (int) $this->dataTimeout, (int) (($this->dataTimeout - $timeout) * 1000000));
@@ -540,9 +542,22 @@ class Connection extends Component
             }
             $this->initConnection();
         } else {
-            \Yii::error("Failed to open redis DB connection ($connection): $errorNumber - $errorDescription", __CLASS__);
-            $message = YII_DEBUG ? "Failed to open redis DB connection ($connection): $errorNumber - $errorDescription" : 'Failed to open DB connection.';
-            throw new Exception($message, $errorDescription, $errorNumber);
+
+            // if this is $errorNumber 0 - php_network_getaddresses: getaddrinfo failed: Name or service not known
+            // try another time
+            if ($errorNumber === 0 & $try > 0) {
+
+                // sleed for half second
+                time_nanosleep(0, 500000000);
+
+                // try again
+                $this->open($try-1);
+
+            } else {
+                \Yii::error("Failed to open redis DB connection ($connection): $errorNumber - $errorDescription", __CLASS__);
+                $message = YII_DEBUG ? "After 5 tries - Failed to open redis DB connection ($connection): $errorNumber - $errorDescription" : 'After 5 tries - Failed to open DB connection.';
+                throw new Exception($message, $errorDescription, $errorNumber);
+            }
         }
     }
 
